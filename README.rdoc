@@ -1,0 +1,23 @@
+= Graphviz-infiniband-topology
+
+Create schematic representation of your Infiniband topologies using graphviz.
+
+== Installation
+
+A working implementation of the Ruby programming language (http://www.ruby-lang.org)
+is required for the script execution, as well as the following gems:
+
+* graph (https://github.com/seattlerb/graph)
+
+Graphviz (www.graphviz.org/) is only required for the export of the produced schema
+to non-dot file formats such as png, svg, pdf...
+
+== Usage
+
+  $ chmod +x topology.rb
+  $ iblinkinfo.pl | topology.rb -f png
+  $ # Or ./topology.rb <iblinkinfo.pl output file>
+
+== Copyright
+
+Copyright (c) 2012 Guillaume Laville. See LICENSE for details.
