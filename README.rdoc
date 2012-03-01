@@ -14,9 +14,8 @@ to non-dot file formats such as png, svg, pdf...
 
 == Usage
 
-  $ chmod +x topology.rb
   $ iblinkinfo.pl | topology.rb -f png
-  $ # Or ./topology.rb <iblinkinfo.pl output file>
+  # Or topology.rb <iblinkinfo.pl output file>
 
 == Copyright
 
