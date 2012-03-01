@@ -250,9 +250,15 @@ digraph do
         e.attributes << "penwidth = 2" if link.speed == 40 
     end
     
+    output = settings[:output]
+    
+    # Always generate dot output
+    save output
+    
+    # Export output do selected formats by calling graphviz directly,
+    # without regenerating the dot file each time (contrary to Graph#save)
     settings[:formats].each do |format|
-    	output = settings[:output]
     	puts "Exporting to #{output}.#{format}..."
-    	save output, format
+    	system "dot -T#{type} #{output}.dot > #{output}.#{type}" if type
     end
 end
