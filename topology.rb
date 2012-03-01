@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # encoding: UTF-8
 #
-# Copyright 2012 Guillaume Laville <laville.guillaume@gmail.com>
+# Copyright (C) 2012 Guillaume Laville <laville.guillaume@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,8 +24,8 @@
 #
 # USAGE
 #
-#   topology.rb <iblinkinfo.pl output file> OR
-#   iblinkinfo.pl | topology.rb
+#   topology.rb -f png <iblinkinfo.pl output file> OR
+#   iblinkinfo.pl | topology.rb -f png
 
 require 'optparse'
 require 'graph'
@@ -128,7 +128,10 @@ parser.parse!
 class Graph
     class Edge
         def to_s
-            fromto = "%s -> %s" % [from.name, to.name]
+            fromto = "%s -> %s" % [
+            	from.name.split(":").map {|e| "%p" % e}.join(":"),
+            	to.name.split(":").map {|e| "%p" % e}.join(":")
+            ]
             if self.attributes? then
               "%-20s [ %-20s ]" % [fromto, attributes.join(',')]
             else
