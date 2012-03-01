@@ -35,6 +35,7 @@ require 'graph'
 #
 
 settings = {
+	:color      => true,
     :all_labels => false,      # Show labels on all entities (links and nodes)
     :inter_only => false,      # Show only interconnection (switch) nodes
     :hosts_only => false,      # Show only hosts (endpoints) nodes
@@ -88,6 +89,10 @@ parser = OptionParser.new do |opt|
         settings[:lid] = i
     end
     
+    opt.on("--bw", "Do not use colors in output") do
+    	settings[:color] = false
+    end
+    
     opt.on("-a", "--all-labels", "Show all labels (pretty crowdy o)") do
         settings[:all_labels] = true
     end
@@ -100,6 +105,10 @@ parser = OptionParser.new do |opt|
         settings[:hosts_only] = true
     end
     
+    opt.on("--host [NAME]", String, "Show only this host connection") do |host|
+        settings[:host] = host
+    end
+    
     opt.on("-f", "--formats x,y,z", Array, "Export to the specified formats (requires graphviz)") do |formats|
     	settings[:formats] = formats
     end
@@ -108,9 +117,6 @@ parser = OptionParser.new do |opt|
     	settings[:output] = output
     end
     
-    opt.on("--host [NAME]", String, "Show only this host connection") do |host|
-        settings[:host] = host
-    end
     
     opt.on_tail("-h", "--help", "Show this help") do
         puts opt
@@ -165,9 +171,12 @@ end
 # OUTPUT HELPERS
 #
 
-def switch_label(name, ports)
-    '<TABLE><TR><TD COLSPAN="36">%s (%s)</TD></TR><TR>%s</TR></TABLE>' %
-        [name, free_label(ports), (1..36).to_a.map { |e| port_label(e, ports) }.join]
+def switch_label(name, ports, color)
+    '<TABLE><TR><TD COLSPAN="36">%s (%s)</TD></TR><TR>%s</TR></TABLE>' % [
+    	name, free_label(ports), (1..36).to_a.map { |e|
+        	port_label(e, ports, color)
+        }.join
+    ]
 end
 
 def free_label(ports)
@@ -179,8 +188,12 @@ def free_label(ports)
     end
 end
 
-def port_label(i, ports)
-    (ports.has_key?(i) ? '<TD PORT="p%d">%d</TD>' : '<TD PORT="p%d" BGCOLOR="lawngreen">%d</TD>') % [i, i]
+def port_label(i, ports, color)
+    if ports.has_key?(i)
+    	'<TD PORT="p%d">%d</TD>' % [i, i]
+    else
+    	'<TD PORT="p%d" BGCOLOR="%s">%d</TD>' % [i, color, i]
+    end
 end
 
 #
@@ -217,8 +230,9 @@ digraph do
     
     sw_list.each do |id|
         ports = (1..36).to_a.map { |e| "<p%d> %d" % [e, e] }.join("|")
-        node("switch_#{id}").attributes << (%Q{label =<%s>} % switch_label("Switch #{id}", used_ports[id])) << "shape = plaintext"
-        #label(switch_label("Switch #{id}")) #"{Switch #{id}\n|{ #{ports} }}").attributes << "shape = record"
+        free_color = settings[:color] ? "lawngreen" : "lightgray"
+        label = switch_label("Switch #{id}", used_ports[id], free_color) 
+        node("switch_#{id}").attributes << "label =<#{label}>" << "shape = plaintext"
     end
     
     links.each do |link|
@@ -245,9 +259,19 @@ digraph do
         end
             
         e = edge(from, to)
-        e.attributes << "color = blue"
-        # e.attributes << (link.speed == 40 ? 'color = blue' : 'color = lightblue')
-        e.attributes << "penwidth = 2" if link.speed == 40 
+        
+        if settings[:color]
+        	case link.speed
+		    when 40
+		    	e.attributes << "color = blue"
+		    when 20
+		    	e.attributes << "color = lightblue"
+		    else
+		    	e.attributes << "color = black"
+		    end
+		end
+		
+		e.attributes << "penwidth = #{link.speed / 20}"
     end
     
     output = settings[:output]
@@ -259,6 +283,6 @@ digraph do
     # without regenerating the dot file each time (contrary to Graph#save)
     settings[:formats].each do |format|
     	puts "Exporting to #{output}.#{format}..."
-    	system "dot -T#{type} #{output}.dot > #{output}.#{type}" if type
+    	system "dot -T#{format} #{output}.dot > #{output}.#{format}" if format
     end
 end
