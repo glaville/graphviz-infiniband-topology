@@ -52,7 +52,7 @@ settings = {
 SW_RE   = /^Switch\s+\w+\s+(.*)\:$/
 
 # Link information line format
-LINE_RE = /^\s+(\d+)\s+(\d+)\W+==[^=]+\s(\d+\.\d+|undefined)[^=]++==>\s+(\d+)\s+(\d+).*"([^"]+)"/
+LINE_RE = /^\s+(\d+)\s+(\d+)\W+==[^=]+\s(\d+\.\d+|undefined)[^=]+==>\s+(\d+)\s+(\d+).*"([^"]+)"/
 
 # Store informations associated to an IB Link
 class Link < Struct.new(:sw_id, :sw_port, :sw_name, :peer_id,
