@@ -17,6 +17,9 @@ to non-dot file formats such as png, svg, pdf...
   $ iblinkinfo.pl | topology.rb -f png
   # Or topology.rb <iblinkinfo.pl output file>
 
+Saving to svg format is recommended instead of png if your fabric
+contains hundreds of switches.
+
 == Copyright
 
 Copyright (c) 2012 Guillaume Laville. See LICENSE for details.

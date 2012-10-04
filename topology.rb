@@ -225,8 +225,10 @@ digraph do
     else
         proc { |e| true }
     end
+
+    id_mapper = proc { |e| e.sw_id }
     
-    sw_list = links.select(&lid_filter).map(&:sw_id).uniq
+    sw_list = links.select(&lid_filter).map(&id_mapper).uniq
     
     sw_list.each do |id|
         ports = (1..36).to_a.map { |e| "<p%d> %d" % [e, e] }.join("|")
