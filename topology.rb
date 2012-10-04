@@ -28,6 +28,7 @@
 #   iblinkinfo.pl | topology.rb -f png
 
 require 'optparse'
+require 'rubygems'
 require 'graph'
 
 #
