@@ -52,32 +52,44 @@ settings = {
 SW_RE   = /^Switch\s+\w+\s+(.*)\:$/
 
 # Link information line format
-LINE_RE = /^\s+(\d+)\s+(\d+)\W+==[^=]+\s(\d+\.\d+|undefined)[^=]+==>\s+(\d+)\s+(\d+).*"([^"]+)"/
+LINE_RE = /^\s+(\d+)\s+(\d+)\W+==[^=]+\s(\d+\.\d+|undefined)[^=]+==>\s*(\d*)\s*(\d*).*"([^"]*)"/
 
 # Store informations associated to an IB Link
 class Link < Struct.new(:sw_id, :sw_port, :sw_name, :peer_id,
 						:peer_port, :peer_name, :speed)
-    
-    def host?
-        peer_name.include?("mesocomte")
-    end
-    
-    def interconnect?
-        peer_name.include?("Voltaire")
-    end
-    
     def h_name
         "switch_#{sw_id}"
     end
     
-    def h_peer_name
-        host? ? peer_name.scan(/\d+/).first : "switch_#{peer_id}"
+    def h_peer_number
+        peer_name.scan(/\d+/).first
     end
     
     def ports
         "%d => %d" % [sw_port, peer_port]
     end
         
+end
+
+# Store informations associated to an IB Switch
+class Switch
+	
+	attr_accessor :sw_id, :total_ports, :used_ports
+	
+	def initialize(id)
+		@sw_id = id
+		@total_ports = 0
+		@used_ports = Array.new
+	end
+	
+	def total_used
+		@used_ports.size
+	end
+	
+	def total_free
+		total_ports - total_used
+	end
+	
 end
 
 #
@@ -155,6 +167,7 @@ end
 
 sw_name = nil
 links = Array.new
+switches = Hash.new { |h, sw_id| h[sw_id] = Switch.new(sw_id) }
 
 ARGF.each_line do |line|
     if line =~ SW_RE
@@ -162,34 +175,48 @@ ARGF.each_line do |line|
     elsif line =~ LINE_RE
         sw_id, sw_port, speed, peer_id, peer_port, peer_name = $1.to_i, $2.to_i,
             4 * $3.to_f, $4.to_i, $5.to_i, $6
-        links << Link.new(sw_id, sw_port, sw_name, peer_id, peer_port, peer_name, speed) 
-        # p "%d(%d) %s == %d(%d) %s" % [sw_id, sw_port, sw_name, peer_id, peer_port, peer_name]
+        
+        # If we have some peer connected to this port, create a new link object
+        # and increment switch used ports count
+        if peer_name.size > 0
+        	links << Link.new(sw_id, sw_port, sw_name, peer_id, peer_port, peer_name, speed)
+        	#p "%d(%d) %s == %d(%d) %s" % [sw_id, sw_port, sw_name, peer_id, peer_port, peer_name]
+       	end
+       	
+       	switches[sw_id].total_ports +=1
     end
+end
+
+# Associate each switch to its used ports
+links.each do |link|
+    switches[link.sw_id].used_ports << link.sw_port
 end
 
 #
 # OUTPUT HELPERS
 #
 
-def switch_label(name, ports, color)
-    '<TABLE><TR><TD COLSPAN="36">%s (%s)</TD></TR><TR>%s</TR></TABLE>' % [
-    	name, free_label(ports), (1..36).to_a.map { |e|
-        	port_label(e, ports, color)
+def switch_label(switch, free_color)
+    '<TABLE><TR><TD COLSPAN="%d">Switch %d (%s)</TD></TR><TR>%s</TR></TABLE>' % [
+    	switch.total_ports,
+    	switch.sw_id,
+    	free_label(switch.total_free),
+    	(1..switch.total_ports).map { |e|
+        	port_label(e, switch.used_ports, free_color)
         }.join
     ]
 end
 
-def free_label(ports)
-    free = 36 - ports.size
-    case free
+def free_label(free_ports)
+    case free_ports
     when 0; "full"
-    when 1; "#{free} port free"
-    else "#{free} ports free"
+    when 1; "#{free_ports} port free"
+    else "#{free_ports} ports free"
     end
 end
 
 def port_label(i, ports, color)
-    if ports.has_key?(i)
+    if ports.include?(i)
     	'<TD PORT="p%d">%d</TD>' % [i, i]
     else
     	'<TD PORT="p%d" BGCOLOR="%s">%d</TD>' % [i, color, i]
@@ -200,11 +227,11 @@ end
 # OUTPUT DOT GENERATION
 #
 
-used_ports = Hash.new { |h, k| h[k] = Hash.new }
+#used_ports = Hash.new { |h, k| h[k] = Hash.new }
 
-links.each do |link|
-    used_ports[link.sw_id][link.sw_port] = link.peer_port
-end
+#links.each do |link|
+#    used_ports[link.sw_id][link.sw_port] = link.peer_port
+#end
 
 digraph do
     graph_attribs <<   #"overlap = scalexy" <<
@@ -230,11 +257,10 @@ digraph do
     
     sw_list = links.select(&lid_filter).map(&id_mapper).uniq
     
-    sw_list.each do |id|
-        ports = (1..36).to_a.map { |e| "<p%d> %d" % [e, e] }.join("|")
-        free_color = settings[:color] ? "lawngreen" : "lightgray"
-        label = switch_label("Switch #{id}", used_ports[id], free_color) 
-        node("switch_#{id}").attributes << "label =<#{label}>" << "shape = plaintext"
+    sw_list.each do |sw_id|
+    	switch = switches[sw_id]
+        label = switch_label(switch, settings[:color] ? "lawngreen" : "lightgray") 
+        node("switch_#{sw_id}").attributes << "label =<#{label}>" << "shape = plaintext"
     end
     
     links.each do |link|
@@ -251,13 +277,14 @@ digraph do
         next if settings[:hosts_only] && link.interconnect?
         
         # Do not show duplicated interconnection links
-        next if link.interconnect? && link.sw_id > link.peer_id
+        next if sw_list.include?(link.peer_id) && link.sw_id > link.peer_id
         
         from = [link.h_name, link.sw_port].join(":p")
-        if link.interconnect?
-            to = [link.h_peer_name, link.peer_port].join(":p")
+        
+        if sw_list.include?(link.peer_id)
+            to = ["switch_%d" % link.peer_id, link.peer_port].join(":p")
         else
-            to = link.h_peer_name
+            to = link.h_peer_number
         end
             
         e = edge(from, to)
