@@ -202,37 +202,27 @@ def switch_label(switch, free_color)
     	switch.total_ports,
     	switch.sw_id,
     	free_label(switch.total_free),
-    	(1..switch.total_ports).map { |e|
-        	port_label(e, switch.used_ports, free_color)
+    	(1..switch.total_ports).map { |port|
+    		if switch.used_ports.include?(port)
+    			'<TD PORT="p%1$d">%1$2d</TD>' % port
+    		else
+    			'<TD PORT="p%1$d" BGCOLOR="%2$s">%1$2d</TD>' % [port, free_color]
+    		end
         }.join
     ]
 end
 
-def free_label(free_ports)
-    case free_ports
+def free_label(total_free)
+    case total_free
     when 0; "full"
-    when 1; "#{free_ports} port free"
-    else "#{free_ports} ports free"
-    end
-end
-
-def port_label(i, ports, color)
-    if ports.include?(i)
-    	'<TD PORT="p%d">%d</TD>' % [i, i]
-    else
-    	'<TD PORT="p%d" BGCOLOR="%s">%d</TD>' % [i, color, i]
+    when 1; "#{total_free} port free"
+    else    "#{total_free} ports free"
     end
 end
 
 #
 # OUTPUT DOT GENERATION
 #
-
-#used_ports = Hash.new { |h, k| h[k] = Hash.new }
-
-#links.each do |link|
-#    used_ports[link.sw_id][link.sw_port] = link.peer_port
-#end
 
 digraph do
     graph_attribs <<   #"overlap = scalexy" <<
@@ -251,12 +241,10 @@ digraph do
     elsif settings[:lid]
         proc { |e| e.sw_id == settings[:lid] || e.peer_id == settings[:lid] }
     else
-        proc { |e| true }
+        nil
     end
 
-    id_mapper = proc { |e| e.sw_id }
-    
-    sw_list = links.select(&lid_filter).map(&id_mapper).uniq
+    sw_list = links.select(&lid_filter).map { |e| e.sw_id }.uniq
     
     sw_list.each do |sw_id|
     	switch = switches[sw_id]
@@ -264,24 +252,22 @@ digraph do
         node("switch_#{sw_id}").attributes << "label =<#{label}>" << "shape = plaintext"
     end
     
-    links.each do |link|
+    links.select(&lid_filter).each do |link|
         # Apply Host filter
         next if settings[:host] && link.h_peer_name != settings[:host]
         
-        # Apply LID filter to only display equipment-related links
-        next unless lid_filter.call(link)
-        
-        # Only show interconnect links if required
+        # Only show switch -> hosts links if required
         next if settings[:inter_only] && ! link.interconnect?
         
         # Only show switch - hosts links if required
         next if settings[:hosts_only] && link.interconnect?
         
-        # Do not show duplicated interconnection links
+        # Do not show interconnection links two times
         next if sw_list.include?(link.peer_id) && link.sw_id > link.peer_id
         
         from = [link.h_name, link.sw_port].join(":p")
         
+        # If this is an interconnection link (ie the peer is a switch)
         if sw_list.include?(link.peer_id)
             to = ["switch_%d" % link.peer_id, link.peer_port].join(":p")
         else
@@ -293,15 +279,12 @@ digraph do
         if settings[:color]
         	case link.speed
 		    when 40
-		    	e.attributes << "color = blue"
+		    	e.attributes << "color = blue" << "pendwidth = 2"
 		    when 20
 		    	e.attributes << "color = lightblue"
-		    else
-		    	e.attributes << "color = black"
 		    end
 		end
 		
-		e.attributes << "penwidth = #{link.speed / 20}"
     end
     
     output = settings[:output]
