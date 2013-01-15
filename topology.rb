@@ -36,7 +36,7 @@ require 'graph'
 #
 
 settings = {
-	:color      => true,
+    :color      => true,
     :all_labels => false,      # Show labels on all entities (links and nodes)
     :inter_only => false,      # Show only interconnection (switch) nodes
     :hosts_only => false,      # Show only hosts (endpoints) nodes
