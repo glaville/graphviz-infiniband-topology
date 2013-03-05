@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # encoding: UTF-8
 #
-# Copyright (C) 2012 Guillaume Laville <laville.guillaume@gmail.com>
+# Copyright (C) 2012-2013 Guillaume Laville <laville.guillaume@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -36,7 +36,7 @@ require 'graph'
 #
 
 settings = {
-    :color      => true,
+    :color      => true,       # Enable colored output
     :all_labels => false,      # Show labels on all entities (links and nodes)
     :inter_only => false,      # Show only interconnection (switch) nodes
     :hosts_only => false,      # Show only hosts (endpoints) nodes
@@ -296,6 +296,6 @@ digraph do
     # without regenerating the dot file each time (contrary to Graph#save)
     settings[:formats].each do |format|
     	puts "Exporting to #{output}.#{format}..."
-    	system "dot -T#{format} #{output}.dot > #{output}.#{format}" if format
+    	system("dot", "-T#{format}", "#{output}.dot", ">", "#{output}.#{format}") if format
     end
 end
