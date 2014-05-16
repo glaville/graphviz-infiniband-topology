@@ -7,7 +7,7 @@ Create schematic representation of your Infiniband topologies using graphviz.
 A working implementation of the Ruby programming language (http://www.ruby-lang.org)
 is required for the script execution, as well as the following gems:
 
-* graph (https://github.com/seattlerb/graph)
+* ruby-graphviz (https://github.com/glejeune/Ruby-Graphviz)
 
 Graphviz (www.graphviz.org/) is only required for the export of the produced schema
 to non-dot file formats such as png, svg, pdf...
