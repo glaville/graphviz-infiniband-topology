@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # encoding: UTF-8
 #
-# Copyright (C) 2012-2013 Guillaume Laville <laville.guillaume@gmail.com>
+# Copyright (C) 2012-2014 Guillaume Laville <laville.guillaume@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,249 +24,348 @@
 #
 # USAGE
 #
-#   topology.rb -f png <iblinkinfo.pl output file> OR
-#   iblinkinfo.pl | topology.rb -f png
+#   topology.rb -f png <"iblinkinfo --line" output file> OR
+#   iblinkinfo --line | topology.rb -f png
 
 require 'optparse'
-require 'rubygems'
 require 'graphviz'
 
-#
 # DEFAULT SETTINGS
-#
 
 SETTINGS = {
-  :color     => true,     # Enable colored output
-  :all_labels => false,     # Show labels on all entities (links and nodes)
-  :inter_only => false,     # Show only interconnection (switch) nodes
-  :hosts_only => false,     # Show only hosts (endpoints) nodes
-  :output    => "topology", # Default output file
-  :formats   => []        # Export formats (e.g ["png", "svg"])
+  :use_color     => true,       # Enable colored output
+  :all_labels    => false,      # Show labels on all entities (links and nodes)
+  :inter_only    => false,      # Show only interconnection (switch) nodes
+  :output        => "topology", # Default output file
+  :formats       => [],         # Export formats (e.g ["png", "svg"])
+  :include_guid  => false,      # include GUIDs in output
+  :node_format   => nil,        # Custom node label format
+  :switch_format => nil,        # Custom switch label format,
+  :lid           => []          # By default, show all LIDs
 }
 
+# DATA STRUCTURES
 
-#
-# DATA STRUCTURES DEFINITION
-#
-
-# Switch header line format
-SW_RE   = /^Switch\s+\w+\s+(.*)\:$/
-
-# Link information line format
-LINE_RE = /^\s+(\d+)\s+(\d+)\W+==[^=]+\s(\d+\.\d+|undefined)[^=]+==>\s*(\d*)\s*(\d*).*"([^"]*)"/
-
-# Store informations associated to an IB Link
-class Link < Struct.new(:sw_id, :sw_port, :sw_name, :peer_id,
-                        :peer_port, :peer_name, :speed)
-  def h_name
-   "switch_#{sw_id}"
-  end
-  
-  def h_peer_number
-   peer_name.scan(/\d+/).first
-  end
-  
-  def ports
-   "%d => %d" % [sw_port, peer_port]
-  end
-      
+class Node
+    
+    attr_accessor :lid, :guid, :name
+    attr_accessor :switch, :total_ports, :ports
+    
+    def initialize(lid, guid, name)
+        @lid, @guid, @name = lid, guid, name
+        @ports = Hash.new
+        @total_ports = 0
+        @switch = false
+    end
+    
+    def total_used
+        @ports.size
+    end
+    
+    def total_free
+        total_ports - total_used
+    end
+    
+    def connected?(port_num)
+        @ports.key?(port_num)
+    end
+    
+    def links
+        @ports.values
+    end
+    
+    def switch?
+        !! @switch
+    end
+    
 end
 
-# Store informations associated to an IB Switch
-class Switch
-   
-  attr_accessor :sw_id, :total_ports, :used_ports
-   
-  def initialize(id)
-   @sw_id = id
-   @total_ports = 0
-   @used_ports = Array.new
-  end
-   
-  def total_used
-   @used_ports.size
-  end
-   
-  def total_free
-   total_ports - total_used
-  end
-   
-end
+Link = Struct.new(:sw_lid, :sw_port, :sw_guid, :sw_name, :speed,
+                  :peer_lid, :peer_port, :peer_guid, :peer_name)
 
-#
+# REGULAR EXPRESSIONS
+
+# Match a double-quoted string
+QUOTED = /[^"]+"([^"]*)"/
+
+# Match an link definition. Expected lines looks like:
+# <SW GUID> "<SW NAME>" <SW_ID> <SW_PORT> ... ==( ... <SPEED> ... )==>
+# <PEER_GUID> <PEER_LID> <PEER_PORT> "<PEER_NAME>" ...
+
+LINE_RE = /
+    \s*(\w+)                # A switch GUID (hexa)
+    #{QUOTED}               # followed by a quoted switch name
+    \s+(\d+)                # followed by a switch LID (integer)
+    \s+(\d+)                # followed by a switch port (integer)
+    [^=]+                   # ...
+    ==\(                    # ==(
+    [^=]+                   # ...
+    \s+(
+        \d+\.\d+ |          # either a link speed (float) or
+        Down                # "Down" for an unused port
+    )
+    [^=]+                   # ...
+    \)==>                   # )==>
+    \s+(\w*)                # A peer GUID (hexa)
+    \s+(\d*)                # followed by a peer LID (integer)
+    \s+(\d*)                # followed by a peer port (integer)
+    #{QUOTED}               # followed by a quoted peer name
+/x
+
 # ARGUMENT PARSING
-#
 
 parser = OptionParser.new do |opt|
-  opt.on("-l", "--lid [LID]", Integer, "Only show LID-linked links") do |i|
-   SETTINGS[:lid] = i
-  end
+    opt.on("-l", "--lid lid1,lid2,lid3", Array, "Only show LID-related infos") do |list|
+        SETTINGS[:lid] = list.map { |e| e.to_i }
+    end
 
-  opt.on("--bw", "Do not use colors in output") do
-   SETTINGS[:color] = false
-  end
+    opt.on("-g", "--guid") do
+        SETTINGS[:include_guid] = true
+    end
 
-  opt.on("-a", "--all-labels", "Show all labels (pretty crowdy o)") do
-   SETTINGS[:all_labels] = true
-  end
+    opt.on("--bw", "Do not use colors in output") do
+        SETTINGS[:use_color] = false
+    end
 
-  opt.on("-i", "--inter-only", "Show only interconnections") do
-   SETTINGS[:inter_only] = true
-  end
+    opt.on("-i", "--inter-only", "Show only interconnections") do
+        SETTINGS[:inter_only] = true
+    end
 
-  opt.on("-n", "--hosts-only", "Show only hosts connections") do
-   SETTINGS[:hosts_only] = true
-  end
+    opt.on("-f", "--formats x,y,z", Array, "Export to the specified formats (requires graphviz)") do |formats|
+        SETTINGS[:formats] = formats
+    end
 
-  opt.on("--host [NAME]", String, "Show only this host connection") do |host|
-   SETTINGS[:host] = host
-  end
+    opt.on("-o", "--output OUTPUT", "Set output file basename (default: #{SETTINGS[:output]})") do |output|
+        SETTINGS[:output] = output
+    end
+    
+    opt.on("--switch-format FORMAT", "Informations to show in node labels") do |format|
+       SETTINGS[:switch_format] = format
+    end
+      
+    opt.on("--node-format FORMAT", "Information to show in switch labels") do |format|
+        SETTINGS[:node_format] = format
+    end
 
-  opt.on("-f", "--formats x,y,z", Array, "Export to the specified formats (requires graphviz)") do |formats|
-   SETTINGS[:formats] = formats
-  end
-
-  opt.on("-o", "--output OUTPUT", "Set output file basename (default: #{SETTINGS[:output]})") do |output|
-   SETTINGS[:output] = output
-  end
-
-
-  opt.on_tail("-h", "--help", "Show this help") do
-   puts opt
-   exit
-  end
+    opt.on_tail("-h", "--help", "Show this help") do
+        puts opt
+        exit
+    end
 end
 
 parser.parse!
 
-#
 # INPUT FILE PARSING
-#
 
-links = Array.new
-peers = Hash.new { |h, id| h[id] = Peer.new(id) }
-switches = Hash.new { |h, id| h[id] = Switch.new(id) }
-sw_name = nil
+nodes = {}
+links = []
+
+def get_node(nodes, lid, guid, name)
+    nodes[lid] ||= Node.new(lid, guid, name)
+end
 
 ARGF.each_line do |line|
-  if line =~ SW_RE
-     sw_name = $1
-  elsif line =~ LINE_RE
-    sw_id, sw_port, speed, peer_id, peer_port, peer_name = $1.to_i, $2.to_i,
-      4 * $3.to_f, $4.to_i, $5.to_i, $6
-
-    # If we have some peer connected to this port, create a new link object
-    # and increment switch used ports count
-    if peer_name.size > 0
-      links << Link.new(sw_id, sw_port, sw_name, peer_id, peer_port, peer_name, speed)
-      #p "%d(%d) %s == %d(%d) %s" % [sw_id, sw_port, sw_name, peer_id, peer_port, peer_name]
+    if m = LINE_RE.match(line)
+        sw_guid, sw_name, sw_lid, sw_port, speed,
+            peer_guid, peer_lid, peer_port, peer_name = m.captures
+        
+        #puts '%s "%s" %d:%s' % [sw_guid, sw_name, sw_lid, sw_port]
+        
+        sw_lid, sw_port = sw_lid.to_i, sw_port.to_i
+        peer_lid, peer_port = peer_lid.to_i, peer_port.to_i
+        
+        switch = get_node(nodes, sw_lid, sw_guid, sw_name)
+        switch.total_ports += 1
+        switch.switch = true
+            
+        if peer_name.size > 0
+            peer = get_node(nodes, peer_lid, peer_guid, peer_name)
+            
+            # If there is already a link connected on the peer side,
+            # either this is an interconnection link, or we have a big problem.
+            # In both case, ignore this link
+            unless peer.connected?(peer_port)
+                link = Link.new(
+                    sw_lid, sw_port, sw_guid, sw_name, 4 * speed.to_i,
+                    peer_lid, peer_port, peer_guid, peer_name
+                )
+                
+                switch.ports[sw_port] = link
+                peer.ports[peer_port] = link
+                links << link
+            end
+        else
+            # The link is not connected
+        end
     end
-
-    switches[sw_id].total_ports +=1
-  end
 end
 
-# Associate each switch to its used ports
-links.each do |link|
-  switches[link.sw_id].used_ports << link.sw_port
-end
+# OUTPUT FILE HELPERS
 
-#
-# OUTPUT HELPERS
-#
-
-def switch_label(switch, free_color)
-  '<TABLE><TR><TD COLSPAN="%d">Switch %d (%s)</TD></TR><TR>%s</TR></TABLE>' % [
-    switch.total_ports,
-    switch.sw_id,
-    free_label(switch.total_free),
-    (1..switch.total_ports).map { |port|
-      if switch.used_ports.include?(port) || !SETTINGS[:color]
-        '<TD PORT="p%1$d">%1$2d</TD>' % port
-      else
-        '<TD PORT="p%1$d" BGCOLOR="%2$s">%1$2d</TD>' % [port, free_color]
-      end
-    }.join
-  ]
-end
-
-def free_label(total_free)
-  case total_free
-  when 0; "full"
-  when 1; "#{total_free} port free"
-  else   "#{total_free} ports free"
-  end
-end
-
-#
-# OUTPUT DOT GENERATION
-#
-
-graph = GraphViz.new(:G, :type => :digraph)
-graph[:ratio] = 1
-graph.edge[:dir] = "none"
-graph.edge[:fontsize] = 8
-
-lid_filter = if SETTINGS[:host]
-  proc { |e| e.h_peer_name == SETTINGS[:host] }
-elsif SETTINGS[:lid]
-  proc { |e| e.sw_id == SETTINGS[:lid] || e.peer_id == SETTINGS[:lid] }
-else
-  nil
-end
-
-sw_list = links.select(&lid_filter).map { |e| e.sw_id }.uniq
-
-sw_list.each do |sw_id|
-  switch = switches[sw_id]
-  label = switch_label(switch, SETTINGS[:color] ? "lawngreen" : "lightgray")
-  graph.add_nodes("switch_#{sw_id}", :label => "<#{label}>", :shape => "plaintext")
-end
-
-links.select(&lid_filter).each do |link|
-  # Apply Host filter
-  next if SETTINGS[:host] && link.h_peer_name != SETTINGS[:host]
-
-  # Only show interconnect links if required
-  next if SETTINGS[:inter_only] && ! link.interconnect?
-
-  # Only show switch -> hosts links if required
-  next if SETTINGS[:hosts_only] && link.interconnect?
-
-  # Do not show interconnection links two times
-  next if sw_list.include?(link.peer_id) && link.sw_id > link.peer_id
-
-  from = {link.h_name => "p" + link.sw_port.to_s}
-
-  # If this is an interconnection link (ie the peer is a switch)
-  if sw_list.include?(link.peer_id)
-    to = {"switch_%d" % link.peer_id => "p" + link.peer_port.to_s}
-  else
-    to = link.h_peer_number
-  end
-
-  attributes = {}
-
-  if SETTINGS[:color]
-    case link.speed
-    when 40
-      attributes.merge!(:color => "blue", :penwidth => 2)
-    when 20
-      attributes.merge!(:color => "lightblue")
+def ports_summary(switch)
+    total_free = switch.total_free
+    
+    case total_free
+    when 0; "full"
+    when 1; "#{total_free} port free"
+    else    "#{total_free} ports free"
     end
-  end
+end
 
-  graph.add_edges(from, to, attributes)
+def ports_line(switch)
+    free_bg = (SETTINGS[:use_color] ? "lawngreen" : "lightgray")
+    html = ''
+    
+    (1..switch.total_ports).to_a.each do |port|
+        if switch.connected?(port)
+            html += "<TD PORT=\"p#{port}\">#{port}</TD>"
+        else
+            html += "<TD PORT=\"p#{port}\" BGCOLOR=\"#{free_bg}\">#{port}</TD>"
+        end
+    end
+    
+    html
+end
+
+def format_string(format, values)
+    result = format
+    values.each { |key, value| result.gsub!("%#{key}", value.to_s) }
+    result
+end
+
+def switch_label(switch)
+    # If a custom format was specified, use it
+    if SETTINGS[:switch_format]
+        format = SETTINGS[:switch_format]
+    # else if a GUID must be included
+    elsif SETTINGS[:include_guid]
+        format = "switch_%lid (%guid, %report)"
+    # else default format
+    else
+        format = "switch_%lid (%report)"
+    end
+    
+    report = ports_summary(switch)
+    ports = ports_line(switch)
+    
+    name = format_string(format, :lid => switch.lid, :guid => switch.guid,
+                                 :name => switch.name, :report => report)
+    
+    '<TABLE><TR><TD COLSPAN="%d">%s</TD></TR><TR>%s</TR></TABLE>' % [
+        switch.total_ports, name, ports
+    ]
+end
+
+def node_label(node)
+    # If a custom format was specified, use it
+    if SETTINGS[:node_format]
+        format = SETTINGS[:node_format]
+    # else if a GUID must be included
+    elsif SETTINGS[:include_guid]
+        format = "%lid (%guid)"
+    # else default format
+    else
+        format = "%lid"
+    end
+    
+    name = format_string(format, :lid => node.lid, :guid => node.guid,
+                                 :name => node.name)
+end
+
+def interconnect?(link, nodes)
+    nodes[link.sw_lid].switch? && nodes[link.peer_lid].switch?
+end
+
+# OUTPUT FILE GENERATION
+
+# Having no nodes and no links is very suspect
+
+if links.size == 0 && nodes.size == 0
+    puts ">>> WARNING: Could not find any links or nodes in the given topology"
+    puts ">>> WARNING: This script is now based on 'ibtopology --line' output"
+end
+
+# Keep only the links related to the specified LID, if required
+
+if SETTINGS[:lid].size > 0
+    lid = SETTINGS[:lid]
+    puts ">>> Only keep hardware related to LID #{lid}"
+    links = links.select { |l| (lid & [l.sw_lid, l.peer_lid]).size > 0 }
+end
+
+# Keep only the interconnection links, if required
+
+if SETTINGS[:inter_only]
+    puts ">>> Only keep interconnection links"
+    links = links.select { |l| interconnect?(l, nodes) }
+end
+
+# Keep only the nodes used for the filtered links
+
+nodes_lids = links.map { |l| [l.sw_lid, l.peer_lid] }.flatten.uniq
+nodes = nodes_lids.inject({}) { |h, lid| h.update(lid => nodes[lid]) }
+
+# Generate the graphviz output
+
+graph = GraphViz.new(:G, :type => :digraph) do |g|
+    g[:ratio] = 1
+    g.edge[:dir] = "none"
+    g.edge[:fontsize] = 8
+    
+    # Add nodes
+    nodes.each do |lid, node|
+        if node.switch?
+            label = switch_label(node)
+            g.add_nodes("switch_#{node.lid}", :label => "<#{label}>",
+                :shape => "plaintext")
+        else
+            label = node_label(node)
+            g.add_nodes("node_#{node.lid}", :label => label)
+        end
+    end
+    
+    # Add links
+    links.each do |link|
+        from = {"switch_#{link.sw_lid}" => "p" + link.sw_port.to_s}
+        attributes = {}
+        
+        if interconnect?(link, nodes)
+            to = {"switch_#{link.peer_lid}" => "p" + link.peer_port.to_s}
+        else
+            to = "node_#{link.peer_lid}"
+        end
+        
+        if interconnect?(link, nodes)
+            attributes[:color] = "firebrick"
+            attributes[:style] = "bold"
+        else
+            case link.speed
+            when 40
+                attributes[:color] = "blue"
+                attributes[:penwidth] = 2
+            when 20
+                attributes[:color] = "lightblue"
+            end
+        end
+        
+        # Remove color information if color support was disabled 
+        unless SETTINGS[:use_color]
+            attributes.delete(:color)
+        end
+        
+        g.add_edges(from, to, attributes)
+    end
 end
 
 output = SETTINGS[:output]
 
 # Always generate dot output
+puts "Generating #{output}.dot..."
 graph.output(:dot => output + ".dot")
 
-# Export output do selected formats by calling graphviz directly,
-# without regenerating the dot file each time (contrary to Graph#save)
+# Also generate the required formats
 SETTINGS[:formats].each do |format|
-  puts "Exporting to #{output}.#{format}..."
-  system("dot", "-T#{format}", "#{output}.dot", ">", "#{output}.#{format}") if format
+    output_file = [output, format].join(".")
+    puts "Generating #{output_file}..."
+    graph.output(format.to_sym => output_file)
 end
