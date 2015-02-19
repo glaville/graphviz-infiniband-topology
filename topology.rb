@@ -36,7 +36,7 @@ SETTINGS = {
   :use_color     => true,       # Enable colored output
   :all_labels    => false,      # Show labels on all entities (links and nodes)
   :inter_only    => false,      # Show only interconnection (switch) nodes
-  :output        => "topology", # Default output file
+  :output        => "topology", # Default output file, ARGF.filename is used if available
   :formats       => [],         # Export formats (e.g ["png", "svg"])
   :include_guid  => false,      # include GUIDs in output
   :node_format   => nil,        # Custom node label format
@@ -164,10 +164,22 @@ def get_node(nodes, lid, guid, name)
     nodes[lid] ||= Node.new(lid, guid, name)
 end
 
+if SETTINGS[:output] == "topology" && ARGF.filename != "-"
+    SETTINGS[:output] = File.basename(ARGF.filename, File.extname(ARGF.filename))
+end
+
 ARGF.each_line do |line|
     if m = LINE_RE.match(line)
         sw_guid, sw_name, sw_lid, sw_port, speed,
             peer_guid, peer_lid, peer_port, peer_name = m.captures
+        
+        # Some outputs also include adapter => switch links, ignore them.
+        if sw_name.include?("HCA")
+            next
+        end
+        
+        # Only keep the first part of the node name
+        peer_name = peer_name.split(/\s+/).first || ""
         
         #puts '%s "%s" %d:%s' % [sw_guid, sw_name, sw_lid, sw_port]
         
@@ -265,7 +277,7 @@ def node_label(node)
         format = "%lid (%guid)"
     # else default format
     else
-        format = "%lid"
+        format = "%name"
     end
     
     name = format_string(format, :lid => node.lid, :guid => node.guid,
